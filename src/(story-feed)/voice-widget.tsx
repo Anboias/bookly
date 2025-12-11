@@ -96,6 +96,16 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 			// This way the client never sees the API key
 			const conversation = await Conversation.startSession({
 				signedUrl: signedUrl,
+				// Configure for faster, more natural conversation
+				config: {
+					// Faster turn detection - agent responds quicker after you stop speaking
+					turnDetection: {
+						type: 'server_vad', // Use server-side voice activity detection
+						threshold: 0.5, // Lower = more sensitive (detects silence faster)
+						prefix_padding_ms: 300, // How much audio before speech to include
+						silence_duration_ms: 700 // How long to wait after speech stops (lower = faster response)
+					}
+				},
 				onConnect: () => {
 					console.log('✅ Connected - Character will now speak introduction')
 					setState('speaking') // Start with speaking state
@@ -118,15 +128,27 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 				},
 				onMessage: (message: any) => {
 					console.log('💬 Message:', message)
+				},
+				// Additional callbacks for better state tracking
+				onUserTranscript: (transcript: any) => {
+					console.log('🎤 You said:', transcript)
+				},
+				onAgentResponse: (response: any) => {
+					console.log('🤖 Agent responding:', response)
+					setState('speaking')
+				},
+				onStatusChange: (status: any) => {
+					console.log('📊 Status changed:', status)
 				}
 			} as any) // Type assertion for now until package is installed
 			
 			conversationRef.current = conversation
 			
 		} catch (error) {
-			console.error('Error starting conversation:', error)
-			setErrorMessage('Failed to start conversation. Please try again. 2')
+			console.error('❌ Error starting conversation:', error)
+			setErrorMessage(`Failed to start: ${error instanceof Error ? error.message : 'Unknown error'}`)
 			setState('error')
+			isStartingRef.current = false
 		}
 	}
 	
