@@ -17,7 +17,7 @@ const StoryFeed = () => {
     if (stories.length > 0) {
       timeoutRef.current = setTimeout(() => {
         setSelectedCharacter(stories[currentIndex].characters[0]);
-      }, 1500);
+      }, 200);
     }
 
     return () => {
@@ -54,6 +54,11 @@ const StoryFeed = () => {
   const handleCloseWidget = () => {
     setSelectedCharacter(null);
   };
+  
+  // Clear selected character when scrolling to a different story
+  useEffect(() => {
+    setSelectedCharacter(null);
+  }, [currentIndex]);
 
   return (
     <div 
@@ -72,6 +77,7 @@ const StoryFeed = () => {
       {/* Floating Voice Widget */}
       {selectedCharacter && (
         <VoiceWidget 
+          key={selectedCharacter.id} // Force remount when character changes
           character={selectedCharacter} 
           onClose={handleCloseWidget}
         />

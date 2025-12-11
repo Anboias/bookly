@@ -17,10 +17,11 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 	const [state, setState] = useState<ConversationState>('idle')
 	const [showIntro, setShowIntro] = useState(true)
 	const [errorMessage, setErrorMessage] = useState<string>('')
-	const [hasPlayedIntro, setHasPlayedIntro] = useState(false)
+	const [isPlayingIntro, setIsPlayingIntro] = useState(false)
 	
 	const conversationRef = useRef<any>(null)
 	const audioContextRef = useRef<AudioContext | null>(null)
+	const audioRef = useRef<HTMLAudioElement | null>(null)
 	
 	// Get the voice ID for this character
 	const voiceId = getVoiceId(character.age, character.gender)
@@ -33,16 +34,37 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 		}
 	}, [])
 	
-	// Play introduction when character is first selected
+	// Auto-play introduction when character changes
 	useEffect(() => {
-		if (!hasPlayedIntro && character) {
+		// Automatically play introduction
+		const timer = setTimeout(() => {
 			playIntroduction()
-			setHasPlayedIntro(true)
+		}, 300) // Small delay to let component mount
+		
+		// Cleanup: stop any playing audio when component unmounts or character changes
+		return () => {
+			clearTimeout(timer)
+			if (audioRef.current) {
+				audioRef.current.pause()
+				audioRef.current = null
+			}
+			setIsPlayingIntro(false)
 		}
-	}, [character, hasPlayedIntro])
+	}, [character.id])
 	
 	const playIntroduction = async () => {
 		try {
+			console.log('🎵 Starting playIntroduction for', character.name)
+			setIsPlayingIntro(true)
+			
+			// Stop any currently playing audio
+			if (audioRef.current) {
+				audioRef.current.pause()
+				audioRef.current.currentTime = 0
+				audioRef.current = null
+			}
+			
+			console.log('🎵 Fetching audio from /api/tts...')
 			// Call our backend API to generate the introduction audio
 			const response = await fetch('/api/tts', {
 				method: 'POST',
@@ -55,23 +77,73 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 				})
 			})
 			
+			console.log('🎵 Response status:', response.status)
+			
 			if (!response.ok) {
-				console.error('Failed to generate introduction audio')
+				const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+				console.error('❌ Failed to generate introduction audio:', response.status, errorData)
+				setIsPlayingIntro(false)
 				return
 			}
 			
 			const audioBlob = await response.blob()
+			console.log('🎵 Blob size:', audioBlob.size, 'bytes, type:', audioBlob.type)
+			
+			// Check if blob is valid
+			if (audioBlob.size === 0) {
+				console.error('❌ Received empty audio blob')
+				setIsPlayingIntro(false)
+				return
+			}
+			
 			const audioUrl = URL.createObjectURL(audioBlob)
+			console.log('🎵 Created audio URL:', audioUrl)
 			const audio = new Audio(audioUrl)
 			
-			audio.play()
+			// Store reference to current audio
+			audioRef.current = audio
+			
+			// Play with error handling
+			console.log('🎵 Attempting to play audio...')
+			try {
+				await audio.play()
+				console.log('✅ Audio playing successfully!')
+			} catch (playError: any) {
+				// If autoplay is blocked, that's OK - user can click the button
+				if (playError.name === 'NotAllowedError') {
+					console.log('ℹ️ Autoplay blocked by browser - user can click play button')
+				} else {
+					console.error('❌ Error playing audio:', playError)
+				}
+				URL.revokeObjectURL(audioUrl)
+				audioRef.current = null
+				setIsPlayingIntro(false)
+				return
+			}
 			
 			audio.onended = () => {
+				console.log('🎵 Audio playback ended')
 				URL.revokeObjectURL(audioUrl)
+				audioRef.current = null
+				setIsPlayingIntro(false)
+			}
+			
+			// Also clean up on error
+			audio.onerror = (e) => {
+				console.error('❌ Audio element error:', e)
+				URL.revokeObjectURL(audioUrl)
+				audioRef.current = null
+				setIsPlayingIntro(false)
 			}
 		} catch (error) {
-			console.error('Error playing introduction:', error)
+			console.error('❌ Error playing introduction:', error)
+			setIsPlayingIntro(false)
 		}
+	}
+	
+	const handlePlayIntroduction = () => {
+		console.log('🎯 Play button clicked for', character.name)
+		playIntroduction()
 	}
 	
 	const handleStartConversation = async () => {
@@ -134,20 +206,41 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 	}
 	
 	const handleStopConversation = useCallback(async () => {
+		// Stop any playing introduction audio
+		if (audioRef.current) {
+			audioRef.current.pause()
+			audioRef.current.currentTime = 0
+			audioRef.current = null
+		}
+		
+		// End conversation session
 		if (conversationRef.current) {
-			await conversationRef.current.endSession()
+			try {
+				await conversationRef.current.endSession()
+			} catch (error) {
+				console.error('Error ending conversation:', error)
+			}
 			conversationRef.current = null
 		}
+		
 		setState('idle')
 		setShowIntro(true)
-		setHasPlayedIntro(false)
 	}, [])
 	
-	// Cleanup on unmount
+	// Cleanup on unmount - stop all audio and conversations
 	useEffect(() => {
 		return () => {
+			// Stop any ongoing conversation
 			if (conversationRef.current) {
 				conversationRef.current.endSession()
+				conversationRef.current = null
+			}
+			
+			// Stop any playing introduction audio
+			if (audioRef.current) {
+				audioRef.current.pause()
+				audioRef.current.currentTime = 0
+				audioRef.current = null
 			}
 		}
 	}, [])
@@ -160,8 +253,23 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 					<p className="text-sm text-foreground leading-relaxed">
 						"{character.introduction}"
 					</p>
-					<p className="text-xs text-muted-foreground mt-2">
-						— {character.name}
+					<p className="text-xs text-muted-foreground mt-2 flex items-center justify-between">
+						<span>— {character.name}</span>
+						{!isPlayingIntro && (
+							<button
+								onClick={handlePlayIntroduction}
+								className="ml-3 text-primary hover:text-primary/80 transition-colors"
+								title="Play introduction"
+							>
+								<Volume2 className="w-4 h-4" />
+							</button>
+						)}
+						{isPlayingIntro && (
+							<span className="ml-3 flex items-center gap-1 text-primary">
+								<Volume2 className="w-4 h-4 animate-pulse" />
+								<span className="text-xs">Playing...</span>
+							</span>
+						)}
 					</p>
 				</div>
 			)}
