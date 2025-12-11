@@ -25,6 +25,22 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 	
 	// Auto-start conversation when character changes
 	useEffect(() => {
+		console.log('🔄 Character changed to:', character.name)
+		
+		// First, cleanup any existing conversation immediately
+		if (conversationRef.current) {
+			console.log('🛑 Ending previous conversation before starting new one')
+			try {
+				conversationRef.current.endSession()
+			} catch (error) {
+				console.error('Error ending previous session:', error)
+			}
+			conversationRef.current = null
+		}
+		
+		// Reset the starting flag
+		isStartingRef.current = false
+		
 		// Start conversation automatically with a small delay
 		const timer = setTimeout(() => {
 			handleStartConversation()
@@ -32,6 +48,7 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 		
 		// Cleanup: stop conversation when component unmounts or character changes
 		return () => {
+			console.log('🧹 Cleanup triggered for:', character.name)
 			clearTimeout(timer)
 			if (conversationRef.current) {
 				try {
@@ -41,6 +58,7 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 				}
 				conversationRef.current = null
 			}
+			isStartingRef.current = false
 		}
 	}, [character.id])
 	
