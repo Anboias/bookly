@@ -2,6 +2,8 @@
 
 A Next.js application that brings book characters to life through AI-powered voice conversations using ElevenLabs Conversational AI.
 
+[Demo](https://booklyelevenlabs.vercel.app/)
+
 ## ✨ Features
 
 - **Story Feed**: Vertical scrolling feed of classic literature stories
