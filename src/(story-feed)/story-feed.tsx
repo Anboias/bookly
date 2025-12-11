@@ -9,6 +9,23 @@ const StoryFeed = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Select the first character by default on component mount
+  useEffect(() => {
+    if (stories.length > 0) {
+      timeoutRef.current = setTimeout(() => {
+        setSelectedCharacter(stories[currentIndex].characters[0]);
+      }, 1500);
+    }
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [currentIndex]);
   
   // Track current story based on scroll position
   useEffect(() => {
