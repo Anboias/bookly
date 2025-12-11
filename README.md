@@ -194,6 +194,17 @@ bookly/
 - **Icons**: Lucide React
 - **State Management**: React Hooks
 
+## 🤖 Setting Up Characters
+
+**Important**: Each character needs an ElevenLabs agent configured before conversations will work.
+
+See **[AGENT_SETUP_GUIDE.md](./AGENT_SETUP_GUIDE.md)** for detailed instructions on:
+- Creating agents in ElevenLabs dashboard
+- Configuring voice, personality, and introduction
+- Adding agent IDs to your characters
+
+Without agent IDs, you'll see: _"No agent ID configured for [Character]"_
+
 ## 📝 Development
 
 ### Running Tests

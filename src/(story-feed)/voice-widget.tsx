@@ -14,185 +14,110 @@ interface VoiceWidgetProps {
 type ConversationState = 'idle' | 'connecting' | 'listening' | 'speaking' | 'error'
 
 const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
-	const [state, setState] = useState<ConversationState>('idle')
-	const [showIntro, setShowIntro] = useState(true)
+	const [state, setState] = useState<ConversationState>('connecting')
 	const [errorMessage, setErrorMessage] = useState<string>('')
-	const [isPlayingIntro, setIsPlayingIntro] = useState(false)
 	
 	const conversationRef = useRef<any>(null)
-	const audioContextRef = useRef<AudioContext | null>(null)
-	const audioRef = useRef<HTMLAudioElement | null>(null)
+	const isStartingRef = useRef(false)
 	
 	// Get the voice ID for this character
 	const voiceId = getVoiceId(character.age, character.gender)
 	
-	// Initialize audio context
+	// Auto-start conversation when character changes
 	useEffect(() => {
-		audioContextRef.current = new AudioContext()
-		return () => {
-			audioContextRef.current?.close()
-		}
-	}, [])
-	
-	// Auto-play introduction when character changes
-	useEffect(() => {
-		// Automatically play introduction
+		// Start conversation automatically with a small delay
 		const timer = setTimeout(() => {
-			playIntroduction()
-		}, 300) // Small delay to let component mount
+			handleStartConversation()
+		}, 300)
 		
-		// Cleanup: stop any playing audio when component unmounts or character changes
+		// Cleanup: stop conversation when component unmounts or character changes
 		return () => {
 			clearTimeout(timer)
-			if (audioRef.current) {
-				audioRef.current.pause()
-				audioRef.current = null
+			if (conversationRef.current) {
+				try {
+					conversationRef.current.endSession()
+				} catch (error) {
+					console.error('Error ending session on cleanup:', error)
+				}
+				conversationRef.current = null
 			}
-			setIsPlayingIntro(false)
 		}
 	}, [character.id])
 	
-	const playIntroduction = async () => {
-		try {
-			console.log('🎵 Starting playIntroduction for', character.name)
-			setIsPlayingIntro(true)
-			
-			// Stop any currently playing audio
-			if (audioRef.current) {
-				audioRef.current.pause()
-				audioRef.current.currentTime = 0
-				audioRef.current = null
-			}
-			
-			console.log('🎵 Fetching audio from /api/tts...')
-			// Call our backend API to generate the introduction audio
-			const response = await fetch('/api/tts', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({
-					text: character.introduction,
-					voiceId: voiceId
-				})
-			})
-			
-			console.log('🎵 Response status:', response.status)
-			
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-				console.error('❌ Failed to generate introduction audio:', response.status, errorData)
-				setIsPlayingIntro(false)
-				return
-			}
-			
-			const audioBlob = await response.blob()
-			console.log('🎵 Blob size:', audioBlob.size, 'bytes, type:', audioBlob.type)
-			
-			// Check if blob is valid
-			if (audioBlob.size === 0) {
-				console.error('❌ Received empty audio blob')
-				setIsPlayingIntro(false)
-				return
-			}
-			
-			const audioUrl = URL.createObjectURL(audioBlob)
-			console.log('🎵 Created audio URL:', audioUrl)
-			const audio = new Audio(audioUrl)
-			
-			// Store reference to current audio
-			audioRef.current = audio
-			
-			// Play with error handling
-			console.log('🎵 Attempting to play audio...')
-			try {
-				await audio.play()
-				console.log('✅ Audio playing successfully!')
-			} catch (playError: any) {
-				// If autoplay is blocked, that's OK - user can click the button
-				if (playError.name === 'NotAllowedError') {
-					console.log('ℹ️ Autoplay blocked by browser - user can click play button')
-				} else {
-					console.error('❌ Error playing audio:', playError)
-				}
-				URL.revokeObjectURL(audioUrl)
-				audioRef.current = null
-				setIsPlayingIntro(false)
-				return
-			}
-			
-			audio.onended = () => {
-				console.log('🎵 Audio playback ended')
-				URL.revokeObjectURL(audioUrl)
-				audioRef.current = null
-				setIsPlayingIntro(false)
-			}
-			
-			// Also clean up on error
-			audio.onerror = (e) => {
-				console.error('❌ Audio element error:', e)
-				URL.revokeObjectURL(audioUrl)
-				audioRef.current = null
-				setIsPlayingIntro(false)
-			}
-		} catch (error) {
-			console.error('❌ Error playing introduction:', error)
-			setIsPlayingIntro(false)
-		}
-	}
-	
-	const handlePlayIntroduction = () => {
-		console.log('🎯 Play button clicked for', character.name)
-		playIntroduction()
-	}
-	
 	const handleStartConversation = async () => {
+		// Prevent multiple simultaneous starts
+		if (isStartingRef.current || conversationRef.current) {
+			console.log('⏭️ Conversation already starting or active')
+			return
+		}
+		
+		isStartingRef.current = true
 		setState('connecting')
-		setShowIntro(false)
 		setErrorMessage('')
 		
+		console.log('🎤 Starting conversation with', character.name)
+		
 		try {
+			// Check if character has an agent ID configured
+			if (!character.agentId) {
+				const errorMsg = `${character.name} needs agent setup. See AGENT_SETUP_GUIDE.md`
+				console.error('❌', errorMsg)
+				throw new Error(errorMsg)
+			}
+			
 			// Get a signed URL from our backend API
 			// This keeps the API key secure on the server
+			console.log('🔑 Requesting token for agent:', character.agentId)
 			const tokenResponse = await fetch('/api/conversation/token', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({
-					agentId: voiceId // This should be the actual agent ID from ElevenLabs dashboard
+					agentId: character.agentId // Use the actual ElevenLabs agent ID
 				})
 			})
 
 			if (!tokenResponse.ok) {
-				throw new Error('Failed to get conversation token')
+				const errorData = await tokenResponse.json().catch(() => ({}))
+				console.error('❌ Token failed:', errorData)
+				throw new Error(errorData.error || 'Failed to get token')
 			}
 
 			const { signedUrl } = await tokenResponse.json()
+			console.log('✅ Got signed URL')
 
 			// Dynamically import ElevenLabs to avoid SSR issues
+			console.log('📦 Loading ElevenLabs SDK...')
 			const { Conversation } = await import('@elevenlabs/client')
 			
+			console.log('🔌 Initializing conversation session...')
 			// Initialize ElevenLabs Conversation using the signed URL
 			// This way the client never sees the API key
 			const conversation = await Conversation.startSession({
 				signedUrl: signedUrl,
 				onConnect: () => {
-					console.log('Connected to ElevenLabs')
-					setState('listening')
+					console.log('✅ Connected - Character will now speak introduction')
+					setState('speaking') // Start with speaking state
 				},
 				onDisconnect: () => {
-					console.log('Disconnected from ElevenLabs')
-					setState('idle')
+					console.log('🔌 Disconnected from conversation')
+					setState('connecting')
+					isStartingRef.current = false
 				},
 				onError: (message: string) => {
-					console.error('Conversation error:', message)
-					setErrorMessage('Connection error. Please try again.')
+					console.error('❌ Conversation error:', message)
+					setErrorMessage(`Connection error: ${message}`)
 					setState('error')
+					isStartingRef.current = false
 				},
 				onModeChange: ({ mode }: { mode: string }) => {
+					console.log('🔄 Mode changed to:', mode)
 					// Mode can be 'speaking' or 'listening'
 					setState(mode === 'speaking' ? 'speaking' : 'listening')
+				},
+				onMessage: (message: any) => {
+					console.log('💬 Message:', message)
 				}
 			} as any) // Type assertion for now until package is installed
 			
@@ -200,103 +125,82 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 			
 		} catch (error) {
 			console.error('Error starting conversation:', error)
-			setErrorMessage('Failed to start conversation. Please try again.')
+			setErrorMessage('Failed to start conversation. Please try again. 2')
 			setState('error')
 		}
 	}
 	
 	const handleStopConversation = useCallback(async () => {
-		// Stop any playing introduction audio
-		if (audioRef.current) {
-			audioRef.current.pause()
-			audioRef.current.currentTime = 0
-			audioRef.current = null
-		}
+		console.log('🛑 Stopping conversation...')
 		
 		// End conversation session
 		if (conversationRef.current) {
 			try {
 				await conversationRef.current.endSession()
+				console.log('✅ Conversation ended')
 			} catch (error) {
-				console.error('Error ending conversation:', error)
+				console.error('❌ Error ending conversation:', error)
 			}
 			conversationRef.current = null
 		}
 		
-		setState('idle')
-		setShowIntro(true)
+		setState('connecting')
+		isStartingRef.current = false
+		
+		// Restart the conversation after a brief pause
+		setTimeout(() => {
+			handleStartConversation()
+		}, 500)
 	}, [])
 	
-	// Cleanup on unmount - stop all audio and conversations
+	// Cleanup on unmount - stop all conversations
 	useEffect(() => {
 		return () => {
+			console.log('🧹 Cleaning up conversation on unmount')
 			// Stop any ongoing conversation
 			if (conversationRef.current) {
-				conversationRef.current.endSession()
+				try {
+					conversationRef.current.endSession()
+				} catch (error) {
+					console.error('Error during unmount cleanup:', error)
+				}
 				conversationRef.current = null
 			}
-			
-			// Stop any playing introduction audio
-			if (audioRef.current) {
-				audioRef.current.pause()
-				audioRef.current.currentTime = 0
-				audioRef.current = null
-			}
+			isStartingRef.current = false
 		}
 	}, [])
 
 	return (
 		<div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
-			{/* Intro bubble */}
-			{showIntro && state === 'idle' && (
-				<div className="max-w-[320px] bg-card/95 backdrop-blur-md rounded-2xl rounded-br-sm p-4 shadow-xl border border-border animate-in slide-in-from-bottom-2 fade-in duration-300">
-					<p className="text-sm text-foreground leading-relaxed">
-						"{character.introduction}"
-					</p>
-					<p className="text-xs text-muted-foreground mt-2 flex items-center justify-between">
-						<span>— {character.name}</span>
-						{!isPlayingIntro && (
-							<button
-								onClick={handlePlayIntroduction}
-								className="ml-3 text-primary hover:text-primary/80 transition-colors"
-								title="Play introduction"
-							>
-								<Volume2 className="w-4 h-4" />
-							</button>
-						)}
-						{isPlayingIntro && (
-							<span className="ml-3 flex items-center gap-1 text-primary">
-								<Volume2 className="w-4 h-4 animate-pulse" />
-								<span className="text-xs">Playing...</span>
-							</span>
-						)}
-					</p>
-				</div>
-			)}
-			
 			{/* Error message */}
 			{state === 'error' && errorMessage && (
 				<div className="max-w-[320px] bg-destructive/10 backdrop-blur-md rounded-2xl p-4 shadow-xl border border-destructive/50 animate-in slide-in-from-bottom-2 fade-in duration-300">
 					<p className="text-sm text-destructive leading-relaxed">
 						{errorMessage}
 					</p>
+					<button
+						onClick={handleStartConversation}
+						className="mt-2 text-xs text-primary hover:text-primary/80"
+					>
+						Try again
+					</button>
 				</div>
 			)}
 			
 			{/* Status indicator */}
-			{state !== 'idle' && state !== 'error' && (
+			{state !== 'error' && (
 				<div className="bg-card/90 backdrop-blur-md rounded-full px-4 py-2 shadow-lg border border-border animate-in fade-in duration-200">
 					<p className="text-sm text-foreground flex items-center gap-2">
 						{state === 'connecting' && (
 							<>
 								<Loader2 className="w-4 h-4 animate-spin text-primary" />
-								Connecting...
+								Connecting to {character.name}...
 							</>
 						)}
 						{state === 'listening' && (
 							<>
-								<span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-								Listening...
+								<Mic className="w-4 h-4 text-green-500 animate-pulse" />
+								{character.name} is listening...
 							</>
 						)}
 						{state === 'speaking' && (
@@ -322,17 +226,18 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 					</>
 				)}
 				
-				{/* Widget button */}
+				{/* Widget button - restarts conversation when clicked */}
 				<button
-					onClick={state === 'idle' || state === 'error' ? handleStartConversation : handleStopConversation}
+					onClick={handleStopConversation}
 					disabled={state === 'connecting'}
+					title={state === 'connecting' ? 'Connecting...' : 'Restart conversation'}
 					className={cn(
 						'relative w-16 h-16 md:w-20 md:h-20 rounded-full overflow-hidden',
 						'shadow-2xl transition-all duration-300',
 						'ring-2 ring-offset-2 ring-offset-background',
 						'disabled:opacity-50 disabled:cursor-not-allowed',
-						state === 'idle' || state === 'error'
-							? 'ring-primary hover:scale-110' 
+						state === 'error'
+							? 'ring-destructive hover:scale-110' 
 							: 'ring-primary animate-glow'
 					)}
 				>
@@ -347,19 +252,20 @@ const VoiceWidget = ({ character, onClose }: VoiceWidgetProps) => {
 						className={cn(
 							'absolute inset-0 flex items-center justify-center transition-opacity duration-200',
 							'bg-background/60 backdrop-blur-sm',
-							state === 'idle' || state === 'error' ? 'opacity-0 hover:opacity-100' : 'opacity-100'
+							state === 'connecting' ? 'opacity-100' : 'opacity-0 hover:opacity-100'
 						)}
 					>
-						{(state === 'idle' || state === 'error') && <Mic className="w-6 h-6 text-primary" />}
 						{state === 'connecting' && <Loader2 className="w-6 h-6 text-primary animate-spin" />}
 						{state === 'listening' && <Mic className="w-6 h-6 text-green-400" />}
-						{state === 'speaking' && <MicOff className="w-6 h-6 text-primary" />}
+						{state === 'speaking' && <Volume2 className="w-6 h-6 text-primary" />}
+						{state === 'error' && <X className="w-6 h-6 text-destructive" />}
 					</div>
 				</button>
 				
 				{/* Close button */}
 				<button
 					onClick={onClose}
+					title="Close and stop conversation"
 					className="absolute -top-2 -right-2 w-6 h-6 bg-secondary rounded-full flex items-center justify-center shadow-lg hover:bg-muted transition-colors"
 				>
 					<X className="w-4 h-4 text-muted-foreground" />
